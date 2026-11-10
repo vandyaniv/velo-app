@@ -40,8 +40,7 @@
   .mk-ref{width:16px;height:16px;border-radius:4px;transform:rotate(45deg);border:3px solid var(--txt);background:#0d0f12}
 
   /* haut : pastille d'état + dernier signe de vie */
-  .top{position:fixed;z-index:500;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));top:max(12px,env(safe-area-inset-top));
-    background:rgba(13,15,18,.9);border:1px solid var(--line);border-radius:16px;padding:10px 14px;display:flex;flex-direction:column;gap:6px;
+  .top{background:rgba(13,15,18,.9);border:1px solid var(--line);border-radius:16px;padding:10px 14px;display:flex;flex-direction:column;gap:6px;
     -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
   .top-row{display:flex;justify-content:space-between;align-items:center;gap:12px}
   .brand{font-family:"Space Grotesk",sans-serif;font-size:18px;font-weight:700;letter-spacing:.5px;margin:0}
@@ -51,21 +50,37 @@
   .life i{width:8px;height:8px;border-radius:50%;background:var(--ok)}
   .life.late{color:var(--bad)} .life.late i{background:var(--bad)}
 
-  /* bandeau d'alerte */
-  .alertbar{position:fixed;z-index:490;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));
-    top:calc(max(12px,env(safe-area-inset-top)) + 84px);background:var(--bad);color:#1a0605;border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:4px}
+  /* pile d'en-tête : barre d'état + bandeaux (garde, alerte) */
+  .stack{position:fixed;z-index:500;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));
+    top:max(12px,env(safe-area-inset-top));display:flex;flex-direction:column;gap:8px;pointer-events:none}
+  .stack>*{pointer-events:auto}
+  .guardbar{border-radius:16px;padding:12px 16px;display:flex;flex-direction:column;gap:2px;background:var(--warn);color:#1f1202}
+  .guardbar.silent,.guardbar.blind{background:var(--bad);color:#1a0605}
+  .guardbar .k{font-size:12px;font-weight:600;letter-spacing:.7px}
+  .guardbar .t{font-family:"Space Grotesk",sans-serif;font-size:19px;font-weight:700;line-height:1.2}
+  .guardbar .s{font-size:14px}
+  .alertbar{background:var(--bad);color:#1a0605;border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:4px}
   .alertbar .k{font-size:12px;font-weight:600;letter-spacing:.7px}
   .alertbar .t{font-family:"Space Grotesk",sans-serif;font-size:24px;font-weight:700;line-height:1.15}
   .alertbar .s{font-size:14px}
   .alertbar button{margin-top:8px;min-height:48px;border:0;background:#1a0605;color:#ffe3e0;font-weight:600;border-radius:14px}
 
-  #app:has(.sheet[data-open="true"]) .alertbar{display:none}
+  #app:has(.sheet[data-open="true"]) .alertbar,#app:has(.sheet[data-open="true"]) .guardbar{display:none}
 
   /* panneau du bas */
   .sheet{position:fixed;z-index:600;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);border-radius:24px 24px 0 0;
     padding:0 20px max(20px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:14px;max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px);
     transition:height .2s}
   .sheet[data-open="true"]{height:calc(100vh - 150px);height:calc(100dvh - 150px)}
+  .hline{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mut)}
+  .hline i{width:8px;height:8px;border-radius:50%;background:var(--off);flex:none}
+  .hline.ok{color:var(--mut)} .hline.ok i{background:var(--ok)}
+  .hline.deg,.hline.deg i{color:var(--warn)} .hline.deg i{background:var(--warn)}
+  .hline.blind,.hline.silent{color:var(--bad)} .hline.blind i,.hline.silent i{background:var(--bad)}
+  .hrows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .hrow{background:var(--panel);border-radius:12px;padding:8px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
+  .hrow .lbl{font-size:12px} .hrow b{font-size:14px;font-weight:600} .hrow.bad b{color:var(--bad)} .hrow.warn b{color:var(--warn)}
+  #chain{min-height:48px}
   .head{touch-action:none;display:flex;flex-direction:column;gap:12px}
   .grip{align-self:center;width:100%;min-height:44px;border:0;border-radius:0;background:transparent;display:flex;align-items:center;justify-content:center;padding:0}
   .grip span{width:40px;height:4px;border-radius:2px;background:#333a43;display:block}
@@ -125,20 +140,28 @@
 <div id="app" hidden>
   <div id="map" role="application" aria-label="Carte de la position du vélo"></div>
 
-  <header class="top">
-    <div class="top-row">
-      <h1 class="brand">VÉLO</h1>
-      <div class="pill" id="pill" style="--pc:#8a939e"><i></i><span id="pill-t">EN ATTENTE</span></div>
-    </div>
-    <div class="life late" id="life"><i></i><span id="life-t">Aucun signe du serveur</span></div>
-  </header>
+  <div class="stack" id="stack">
+    <header class="top">
+      <div class="top-row">
+        <h1 class="brand">VÉLO</h1>
+        <div class="pill" id="pill" style="--pc:#8a939e"><i></i><span id="pill-t">EN ATTENTE</span></div>
+      </div>
+      <div class="life late" id="life"><i></i><span id="life-t">Aucun signe du serveur</span></div>
+    </header>
 
-  <section class="alertbar" id="alertbar" role="alert" hidden>
-    <div class="k">ALERTE EN COURS</div>
-    <div class="t" id="al-t">Vélo déplacé</div>
-    <div class="s" id="al-s"></div>
-    <button type="button" id="follow">Suivre en direct</button>
-  </section>
+    <section class="guardbar" id="guardbar" role="alert" hidden>
+      <div class="k" id="gd-k">SURVEILLANCE</div>
+      <div class="t" id="gd-t"></div>
+      <div class="s" id="gd-s"></div>
+    </section>
+
+    <section class="alertbar" id="alertbar" role="alert" hidden>
+      <div class="k">ALERTE EN COURS</div>
+      <div class="t" id="al-t">Vélo déplacé</div>
+      <div class="s" id="al-s"></div>
+      <button type="button" id="follow">Suivre en direct</button>
+    </section>
+  </div>
 
   <section class="sheet" id="sheet" data-open="false" aria-label="Détails et journal">
     <div class="head" id="head">
@@ -157,8 +180,13 @@
       <button type="button" id="disarm">Désactiver</button>
       <a class="btn btn-alt" id="route" href="#" target="_blank" rel="noopener noreferrer" aria-disabled="true">Itinéraire</a>
     </div>
+    <div class="hline" id="hline"><i></i><span id="hline-t">Santé : en attente du premier bilan</span></div>
     <div class="msg" id="msg" role="status" aria-live="polite"></div>
     <div class="body" id="jbody">
+      <h2 class="jt">SANTÉ DU SYSTÈME</h2>
+      <div class="hrows" id="hrows"></div>
+      <button type="button" id="chain">Tester la chaîne</button>
+      <div class="msg" id="chain-msg" role="status" aria-live="polite"></div>
       <h2 class="jt">JOURNAL</h2>
       <ol class="jl" id="jlist"></ol>
       <div class="foot">
@@ -300,6 +328,73 @@ function viewModel(p, now) {
     rows: journalRows(p && p.log, now),
   };
 }
+
+// ---- Preuve de vie : « ne jamais faire confiance au silence »
+const GUARD_WINDOW_S = 20 * 60;               // sans battement valide depuis 20 min : surveillance non garantie
+const REASONS = {
+  fh_stale: "Find Hub ne répond plus", fh_err: "Find Hub : erreurs consécutives",
+  pos_old: "Dernière position ancienne", pos_blind: "Aucune position depuis très longtemps",
+  nt_fail: "Dernier envoi ntfy de la tablette en échec", bat_low: "Batterie de la tablette faible",
+};
+const describeReasons = (rs) => (Array.isArray(rs) ? rs : []).filter((r) => typeof r === "string")
+  .map((r) => REASONS[r] || "Cause inconnue").join(" · ") || "Cause inconnue";
+function guardView(lastHb, p, now) {
+  const hc = p && p.hc && typeof p.hc === "object" ? p.hc : null;
+  if (!isNum(lastHb) || lastHb <= 0 || now - lastHb > GUARD_WINDOW_S) {
+    return { level: "silent", title: "Surveillance non garantie",
+             text: isNum(lastHb) && lastHb > 0 ? "Aucun battement valide depuis " + fmtAge(now - lastHb) + "." : "Aucun battement valide reçu." };
+  }
+  if (hc && hc.hl === "blind") return { level: "blind", title: "Surveillance aveugle", text: describeReasons(hc.rs) };
+  if (hc && hc.hl === "deg")   return { level: "deg",   title: "Surveillance dégradée", text: describeReasons(hc.rs) };
+  return { level: "ok", title: "", text: "" };
+}
+function healthRows(p, now) {
+  const hc = p && p.hc && typeof p.hc === "object" ? p.hc : null;
+  if (!hc) return [];
+  const rs = Array.isArray(hc.rs) ? hc.rs : [];
+  const fh = Array.isArray(hc.fh) ? hc.fh : [], nt = Array.isArray(hc.nt) ? hc.nt : [], bat = Array.isArray(hc.bat) ? hc.bat : null;
+  const rows = [];
+  rows.push({ label: "Find Hub", value: isNum(fh[0]) ? "réponse il y a " + fmtAge(now - fh[0]) : "aucune réponse",
+              state: rs.some((r) => r === "fh_stale" || r === "fh_err") ? "bad" : "ok" });
+  const pos = validPos(p.pos) ? p.pos : null;
+  rows.push({ label: "Dernière position", value: pos ? "il y a " + fmtAge(now - pos.ts) : "aucune",
+              state: rs.includes("pos_blind") ? "bad" : rs.includes("pos_old") ? "warn" : "ok" });
+  const ntFail = isNum(nt[1]) && (!isNum(nt[0]) || nt[1] > nt[0]);
+  rows.push({ label: "Envoi ntfy (tablette)", value: ntFail ? "échec il y a " + fmtAge(now - nt[1]) : isNum(nt[0]) ? "OK" : "inconnu", state: ntFail ? "warn" : "ok" });
+  rows.push({ label: "Batterie tablette", value: bat && isNum(bat[0]) ? bat[0] + " %" + (bat[1] ? " · secteur" : " · sur batterie") : "inconnue",
+              state: rs.includes("bat_low") ? "warn" : "ok" });
+  return rows;
+}
+function healthLine(g, p) {                    // une ligne de synthèse sous le panneau
+  if (g.level === "silent") return { cls: "silent", text: "Santé : serveur muet" };
+  if (g.level === "blind")  return { cls: "blind", text: "Santé : AVEUGLE" };
+  if (g.level === "deg")    return { cls: "deg", text: "Santé : dégradée" };
+  return p && p.hc ? { cls: "ok", text: "Santé : OK" } : { cls: "", text: "Santé : en attente du premier bilan" };
+}
+// Test de la chaîne : aller-retour commande -> réponse signé. Renvoie OK ou la patte défaillante.
+const LEG_TEXT = {
+  send:        "Téléphone vers ntfy.sh : échec d'envoi (réseau ?)",
+  command:     "ntfy vers tablette : la tablette est vivante (battement frais) mais ne répond pas aux commandes",
+  tablet:      "Tablette muette : aucun battement récent (éteinte, hors réseau ou service arrêté ?)",
+  findhub:     "Tablette vers Find Hub : la requête échoue",
+  ntfy_tablet: "Tablette vers ntfy.sh : l'envoi de la tablette échoue",
+  battery:     "Batterie de la tablette faible",
+};
+function chainVerdict(sent, reply, hbAge) {
+  if (!sent || !sent.ok) return { ok: false, leg: "send", text: LEG_TEXT.send, warn: [] };
+  if (!reply) {
+    const leg = isNum(hbAge) && hbAge < GUARD_WINDOW_S ? "command" : "tablet";
+    return { ok: false, leg, text: LEG_TEXT[leg], warn: [] };
+  }
+  if (reply.ok === false) return { ok: false, leg: "findhub", text: LEG_TEXT.findhub + (reply.error ? " (" + String(reply.error).slice(0, 80) + ")" : ""), warn: [] };
+  const hc = reply.hc && typeof reply.hc === "object" ? reply.hc : null;
+  const rs = hc && Array.isArray(hc.rs) ? hc.rs : [];
+  if (hc && hc.hl === "blind") {
+    const r = rs[0], leg = r === "nt_fail" ? "ntfy_tablet" : r === "bat_low" ? "battery" : "findhub";
+    return { ok: false, leg, text: LEG_TEXT[leg] + " : " + describeReasons(rs), warn: [] };
+  }
+  return { ok: true, leg: null, text: "Chaîne OK : commande, réponse et Find Hub fonctionnent.", warn: hc && hc.hl === "deg" ? rs : [] };
+}
 // END_VM
 
 // Stockage de la configuration : « Preferences » de Capacitor dans l'APK, localStorage dans un navigateur.
@@ -314,7 +409,9 @@ async function save(c) {
 }
 async function wipe() { if (Pref) await Pref.remove({ key: KEY }); else localStorage.removeItem(KEY); }
 
-let cfg = null, es = null, lastHb = 0, pending = null, lastP = null;
+let backfilled = false;
+let cfg = null, es = null, lastHb = 0, pending = null, lastP = null, chainPending = null, lastTestOk = 0, nativeHb = 0;
+const Guard = NATIVE && window.Capacitor.Plugins ? window.Capacitor.Plugins.VeloGuard : null;
 let map = null, bike = null, halo = null, refMk = null, route = null, follow = false, firstFit = true, prevMode = null;
 
 function say(text, cls) { const m = $("msg"); m.textContent = text || ""; m.className = "msg " + (cls || ""); }
@@ -335,10 +432,7 @@ function ensureMap() {
 }
 // bas de ce qui recouvre le haut de la carte (barre d'état, bandeau d'alerte)
 function topH() {
-  let h = 0;
-  for (const id of ["alertbar"]) { const e = $(id); if (!e.hidden) h = Math.max(h, e.getBoundingClientRect().bottom); }
-  const t = document.querySelector(".top"); if (t) h = Math.max(h, t.getBoundingClientRect().bottom);
-  return h;
+  const t = $("stack"); return t ? t.getBoundingClientRect().bottom : 0;
 }
 // centre le point dans la partie VISIBLE de la carte (entre le haut recouvert et le panneau du bas)
 function centerOn(lat, lon, zoom) {
@@ -391,6 +485,7 @@ function render(p) {
   // p : charge JSON déchiffrée ; chaque champ est validé (viewModel), aucun innerHTML
   lastP = p;
   if (isNum(p.hb)) lastHb = Math.max(lastHb, p.hb);
+  if (chainPending && p.reply_to && p.reply_to === chainPending.nonce) chainPending.resolve(p);
   const vm = viewModel(p, nowS());
   if (vm.mode) {
     $("pill").style.setProperty("--pc", vm.color);
@@ -430,9 +525,28 @@ function renderJournal(rows) {
   }
 }
 function life() {
-  const v = lifeView(lastHb, nowS());
+  const now = nowS(), hb = Math.max(lastHb, nativeHb);
+  const v = lifeView(hb, now);
   $("life").className = "life" + (v.late ? " late" : ""); $("life-t").textContent = v.text;
-  if (lastP) { const vm = viewModel(lastP, nowS()); $("pos-age").textContent = vm.posAge; }
+  if (lastP) { const vm = viewModel(lastP, now); $("pos-age").textContent = vm.posAge; }
+  const g = guardView(hb, lastP, now);
+  const bar = $("guardbar");
+  bar.hidden = g.level === "ok" || !(cfg && cfg.token) || !backfilled;   // pas d'alarme avant la première lecture de l'historique
+  bar.className = "guardbar " + g.level;
+  $("gd-k").textContent = g.level === "deg" ? "ATTENTION" : "ALARME";
+  $("gd-t").textContent = g.title; $("gd-s").textContent = g.text;
+  const hl = healthLine(g, lastP);
+  $("hline").className = "hline " + hl.cls; $("hline-t").textContent = hl.text + (lastTestOk ? " · test OK " + fmtClock(lastTestOk, now) : "");
+  renderHealth(lastP, now);
+}
+function renderHealth(p, now) {
+  const box = $("hrows"); box.replaceChildren();
+  for (const r of healthRows(p, now)) {
+    const d = document.createElement("div"); d.className = "hrow " + r.state;
+    const l = document.createElement("span"); l.className = "lbl"; l.textContent = r.label;
+    const b = document.createElement("b"); b.textContent = r.value;
+    d.append(l, b); box.appendChild(d);
+  }
 }
 
 /* ---------------- réseau ---------------- */
@@ -457,6 +571,7 @@ async function backfill() {
     const r = await fetch(`${cfg.server}/${encodeURIComponent(cfg.state)}/json?poll=1&since=12h`);
     for (const line of (await r.text()).split("\n")) { if (line.trim()) { try { await handleNtfy(JSON.parse(line)); } catch (e) {} } }
   } catch (e) { say("Impossible de lire l'état (réseau ?)", "err"); }
+  backfilled = true; life();
 }
 function subscribe() {
   if (es) es.close();
@@ -481,6 +596,39 @@ async function command(cmd) {
     setTimeout(() => { if (pending && pending.nonce === nonce) { pending = null; setBusy(false);
       say("Pas de réponse du serveur au bout de 75 s. Il est peut-être éteint.", "err"); } }, 75000);
   } catch (e) { pending = null; setBusy(false); say("Envoi impossible : " + e.message, "err"); }
+}
+
+
+/* ---------------- test de la chaîne ---------------- */
+async function setLastTestOk(ts) {
+  lastTestOk = ts;
+  try { if (Pref) await Pref.set({ key: "velo.lastTestOk", value: String(ts) }); else localStorage.setItem("velo.lastTestOk", String(ts)); } catch (e) {}
+}
+async function loadLastTestOk() {
+  try { const v = Pref ? (await Pref.get({ key: "velo.lastTestOk" })).value : localStorage.getItem("velo.lastTestOk"); lastTestOk = Number(v) || 0; } catch (e) {}
+}
+async function chainTest() {
+  if (!(crypto && crypto.subtle) || !cfg) return;
+  const btn = $("chain"), out = $("chain-msg");
+  btn.disabled = true; out.className = "msg"; out.textContent = "Test en cours (aller-retour signé)…";
+  const ts = nowS();
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const waiting = new Promise((res) => { chainPending = { nonce, resolve: res }; setTimeout(() => res(null), 45000); });
+  let sent = { ok: false };
+  try {
+    const sig = await sign(cfg.token, "status", ts, nonce);
+    const r = await fetch(cfg.server + "/", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic: cfg.command, message: `status ${ts} ${nonce} ${sig}` }) });
+    sent = { ok: r.ok };
+  } catch (e) { sent = { ok: false }; }
+  const reply = sent.ok ? await waiting : null;
+  chainPending = null;
+  const hbAge = lastHb ? nowS() - lastHb : null;
+  const v = chainVerdict(sent, reply, hbAge);
+  if (v.ok) { await setLastTestOk(nowS()); out.className = "msg ok";
+    out.textContent = v.text + (v.warn.length ? " Avertissement : " + describeReasons(v.warn) + "." : ""); }
+  else { out.className = "msg err"; out.textContent = "ÉCHEC : " + v.text; }
+  btn.disabled = false; life();
 }
 
 /* ---------------- panneau glissant ---------------- */
@@ -513,6 +661,12 @@ function start() {
   window.addEventListener("resize", () => { syncSheet(); if (map) map.invalidateSize(); });
   if (!map) $("map").textContent = "Carte indisponible (Leaflet non chargé).";
   subscribe(); backfill(); setInterval(life, 15000);
+  loadLastTestOk().then(life);
+  if (Guard) {                                 // APK : service de preuve de vie + interrupteur homme-mort (natifs)
+    Guard.start().catch(() => {});
+    const pull = async () => { try { const g = await Guard.status(); if (g) { nativeHb = Number(g.lastValidHb) || 0; if (Number(g.lastTestOk) > lastTestOk) lastTestOk = Number(g.lastTestOk); life(); } } catch (e) {} };
+    pull(); setInterval(pull, 20000);
+  }
 }
 
 $("save").onclick = async () => {
@@ -526,6 +680,7 @@ $("arm").onclick = () => command("arm");
 $("disarm").onclick = () => command("disarm");
 $("where").onclick = () => command("ou");
 $("follow").onclick = () => setFollow(!follow);
+$("chain").onclick = () => chainTest();
 $("forget").onclick = async () => {
   if (!confirm("Effacer les jetons et topics de ce navigateur ?")) return;
   await wipe(); if (es) es.close(); location.reload();
@@ -540,6 +695,7 @@ async function importConfig(b64) {
     const j = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b + "=".repeat((4 - b.length % 4) % 4)), (ch) => ch.charCodeAt(0))));
     const c = { server: String(j.server || "").replace(/\/+$/, ""), state: String(j.state || ""),
                 command: String(j.command || ""), token: String(j.token || "") };
+    if (typeof j.probe === "string" && /^[0-9A-Za-z.-]+:\d{1,5}$/.test(j.probe)) c.probe = j.probe;   // sonde Tailscale (facultative)
     if (/^https:\/\//.test(c.server) && c.state && c.command && c.token.length >= 16) { await save(c); return true; }
   } catch (e) {}
   return false;
@@ -574,7 +730,7 @@ const FIXTURE = (location.hostname === "localhost" || location.hostname === "127
     for (const q of [p.pos, p.ref]) if (q) q.ts += dt;
     for (const q of p.trk || []) q[0] += dt;
     for (const q of p.log || []) q[0] += dt;
-    p.hb = nowS() - 100; render(p);
+    p.hb = nowS() - (p.hb_age || 100); backfilled = true; render(p);
     if (new URLSearchParams(location.search).get("open") === "1") setSheet(true);
     if (new URLSearchParams(location.search).get("follow") === "1") setFollow(true);
     document.title = "ready";
