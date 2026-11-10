@@ -97,6 +97,7 @@
   #setup p{color:var(--mut);font-size:14px;margin:0 0 12px}
   label{display:block;color:var(--mut);font-size:14px;margin:12px 0 4px}
   input{width:100%;min-height:48px;font:inherit;color:var(--txt);background:#0b0e13;border:1px solid var(--line2);border-radius:12px;padding:10px 12px}
+  #import{width:100%;margin-top:8px}
   #save{width:100%;margin-top:16px;background:var(--ok);border-color:var(--ok);color:#06130c;font-weight:600}
   @media (prefers-reduced-motion:reduce){.sheet,.leaflet-bottom{transition:none}}
 </style>
@@ -105,6 +106,10 @@
 <section id="setup" hidden>
   <h1>Vélo</h1>
   <p>Configuration (une seule fois). Ces valeurs restent dans ce navigateur (localStorage) et ne sont jamais dans le code de la page.</p>
+  <label for="f-link">Lien de configuration (collé depuis le QR)</label>
+  <input id="f-link" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
+  <button id="import" type="button">Importer le lien</button>
+  <p style="margin-top:16px">Ou saisie manuelle :</p>
   <label for="f-server">Serveur ntfy</label>
   <input id="f-server" value="https://ntfy.sh" autocomplete="off" autocapitalize="off" spellcheck="false">
   <label for="f-state">Topic ÉTAT</label>
@@ -297,8 +302,17 @@ function viewModel(p, now) {
 }
 // END_VM
 
-function load() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
-function save(c) { localStorage.setItem(KEY, JSON.stringify(c)); }
+// Stockage de la configuration : « Preferences » de Capacitor dans l'APK, localStorage dans un navigateur.
+const NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const Pref = NATIVE && window.Capacitor.Plugins ? window.Capacitor.Plugins.Preferences : null;
+async function load() {
+  try { return JSON.parse(Pref ? (await Pref.get({ key: KEY })).value : localStorage.getItem(KEY)); } catch (e) { return null; }
+}
+async function save(c) {
+  const v = JSON.stringify(c);
+  if (Pref) await Pref.set({ key: KEY, value: v }); else localStorage.setItem(KEY, v);
+}
+async function wipe() { if (Pref) await Pref.remove({ key: KEY }); else localStorage.removeItem(KEY); }
 
 let cfg = null, es = null, lastHb = 0, pending = null, lastP = null;
 let map = null, bike = null, halo = null, refMk = null, route = null, follow = false, firstFit = true, prevMode = null;
@@ -501,45 +515,61 @@ function start() {
   subscribe(); backfill(); setInterval(life, 15000);
 }
 
-$("save").onclick = () => {
+$("save").onclick = async () => {
   const c = { server: $("f-server").value.trim().replace(/\/+$/, ""), state: $("f-state").value.trim(),
               command: $("f-cmd").value.trim(), token: $("f-token").value.trim() };
   if (!/^https:\/\//.test(c.server) || !c.state || !c.command || c.token.length < 16) {
     $("setup-msg").textContent = "Vérifie les champs (serveur en https, topics, jeton de 16+ caractères)."; $("setup-msg").className = "msg err"; return; }
-  save(c); cfg = c; $("f-token").value = ""; start();
+  await save(c); cfg = c; $("f-token").value = ""; start();
 };
 $("arm").onclick = () => command("arm");
 $("disarm").onclick = () => command("disarm");
 $("where").onclick = () => command("ou");
 $("follow").onclick = () => setFollow(!follow);
-$("forget").onclick = () => {
+$("forget").onclick = async () => {
   if (!confirm("Effacer les jetons et topics de ce navigateur ?")) return;
-  localStorage.removeItem(KEY); if (es) es.close(); location.reload();
+  await wipe(); if (es) es.close(); location.reload();
 };
 
-// Configuration par QR : l'adresse porte la config dans le fragment « #c=<base64url(JSON)> ».
-// Le fragment n'est JAMAIS envoyé au serveur ; il est lu, validé, enregistré puis effacé de la barre d'adresse.
-(function importFragment() {
-  const m = /^#c=([A-Za-z0-9_-]+)$/.exec(location.hash);
-  if (!m) return;
-  try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}   // effacé d'abord
+// Configuration par QR : le lien porte la config « c=<base64url(JSON)> » dans le fragment (#c=…, page web) ou dans
+// un lien d'application (velo://c/…, APK). Jamais envoyé à un serveur ; lu, validé, enregistré, puis effacé de l'adresse.
+// BEGIN_IMPORT
+async function importConfig(b64) {
   try {
-    const b = m[1].replace(/-/g, "+").replace(/_/g, "/");
+    const b = b64.replace(/-/g, "+").replace(/_/g, "/");
     const j = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b + "=".repeat((4 - b.length % 4) % 4)), (ch) => ch.charCodeAt(0))));
     const c = { server: String(j.server || "").replace(/\/+$/, ""), state: String(j.state || ""),
                 command: String(j.command || ""), token: String(j.token || "") };
-    if (/^https:\/\//.test(c.server) && c.state && c.command && c.token.length >= 16) save(c);
+    if (/^https:\/\//.test(c.server) && c.state && c.command && c.token.length >= 16) { await save(c); return true; }
   } catch (e) {}
-})();
+  return false;
+}
+async function importUrl(url) {
+  const m = /^velo:\/\/c\/([A-Za-z0-9_-]+)\/?$/.exec(String(url || "").trim()) || /#c=([A-Za-z0-9_-]+)$/.exec(String(url || "").trim());
+  return m ? importConfig(m[1]) : false;
+}
+// END_IMPORT
+async function importFragment() {
+  const m = /^#c=([A-Za-z0-9_-]+)$/.exec(location.hash);
+  if (!m) return false;
+  try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}   // effacé d'abord
+  return importConfig(m[1]);
+}
+$("import").onclick = async () => {
+  const ok = await importUrl($("f-link").value);
+  $("f-link").value = "";
+  if (ok) location.reload(); else { $("setup-msg").textContent = "Lien de configuration non reconnu."; $("setup-msg").className = "msg err"; }
+};
 
 // Banc d'essai (localhost / fichier local uniquement) : charge une charge utile d'exemple fournie PAR LE TEST,
 // jamais embarquée dans la page publiée. Aucune coordonnée n'est écrite dans ce fichier.
-const FIXTURE = (location.hostname === "localhost" || location.hostname === "127.0.0.1")
+const FIXTURE = (location.hostname === "localhost" || location.hostname === "127.0.0.1") && !NATIVE
   ? new URLSearchParams(location.search).get("fixture") : null;
-if (FIXTURE && /^[a-z0-9_-]+$/.test(FIXTURE)) {
-  $("setup").hidden = true; $("app").hidden = false;
-  ensureMap(); syncSheet();
-  fetch("/fixtures/" + FIXTURE + ".json").then((r) => r.json()).then((p) => {
+(async function main() {
+  if (FIXTURE && /^[a-z0-9_-]+$/.test(FIXTURE)) {
+    $("setup").hidden = true; $("app").hidden = false;
+    ensureMap(); syncSheet();
+    const p = await (await fetch("/fixtures/" + FIXTURE + ".json")).json();
     const dt = nowS() - (p.now || nowS());                       // décale les horodatages d'exemple vers « maintenant »
     for (const q of [p.pos, p.ref]) if (q) q.ts += dt;
     for (const q of p.trk || []) q[0] += dt;
@@ -548,11 +578,17 @@ if (FIXTURE && /^[a-z0-9_-]+$/.test(FIXTURE)) {
     if (new URLSearchParams(location.search).get("open") === "1") setSheet(true);
     if (new URLSearchParams(location.search).get("follow") === "1") setFollow(true);
     document.title = "ready";
-  });
-} else {
-  cfg = load();
+    return;
+  }
+  await importFragment();
+  const App = NATIVE && window.Capacitor.Plugins ? window.Capacitor.Plugins.App : null;
+  if (App) {
+    try { const l = await App.getLaunchUrl(); if (l && l.url) await importUrl(l.url); } catch (e) {}
+    App.addListener("appUrlOpen", async (ev) => { if (await importUrl(ev && ev.url)) location.reload(); });
+  }
+  cfg = await load();
   if (cfg && cfg.server && cfg.state && cfg.command && cfg.token) start(); else $("setup").hidden = false;
-}
+})();
 </script>
 </body>
 </html>
