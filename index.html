@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex,nofollow">
+<title>Vélo</title>
+<style>
+  :root{
+    --bg:#0e1116; --card:#171c24; --line:#262d38; --txt:#e8edf3; --mut:#93a0b1;
+    --ok:#2ecc71; --warn:#f5a524; --bad:#ff4d4f; --acc:#4da3ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font:17px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  main{max-width:520px;margin:0 auto;padding:16px max(16px,env(safe-area-inset-right)) 32px max(16px,env(safe-area-inset-left))}
+  h1{font-size:20px;margin:8px 0 14px;display:flex;align-items:center;gap:8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:0 0 14px}
+  .state{font-size:30px;font-weight:700;letter-spacing:.5px}
+  .state.ARMED{color:var(--ok)} .state.DISARMED{color:var(--mut)} .state.ALERT{color:var(--bad)}
+  .alertbox{border-color:var(--bad);background:#2a1214}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:4px 0;color:var(--mut)}
+  .row b{color:var(--txt);font-weight:600;text-align:right}
+  .btns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0 0 14px}
+  button{font:inherit;font-weight:700;border:0;border-radius:16px;min-height:68px;color:#fff;cursor:pointer}
+  button:disabled{opacity:.45}
+  #arm{background:#1f9d57} #disarm{background:#3a4352}
+  .ghost{background:transparent;border:1px solid var(--line);color:var(--mut);min-height:48px;border-radius:12px;font-weight:600}
+  a{color:var(--acc)}
+  .life{display:flex;align-items:center;gap:10px}
+  .dot{width:14px;height:14px;border-radius:50%;background:var(--mut);flex:none}
+  .dot.ok{background:var(--ok)} .dot.late{background:var(--bad);box-shadow:0 0 0 4px #ff4d4f33}
+  label{display:block;color:var(--mut);font-size:14px;margin:10px 0 4px}
+  input{width:100%;font:inherit;color:var(--txt);background:#0b0e13;border:1px solid var(--line);border-radius:12px;padding:12px}
+  .msg{min-height:1.4em;color:var(--mut);font-size:15px;margin:6px 2px}
+  .msg.err{color:var(--bad)} .msg.ok{color:var(--ok)}
+  [hidden]{display:none!important}
+  small{color:var(--mut)}
+</style>
+</head>
+<body>
+<main>
+  <h1>🚲 Vélo</h1>
+
+  <!-- Premier lancement : aucun secret dans le code, tout est saisi ici et gardé dans ce navigateur -->
+  <section id="setup" class="card" hidden>
+    <b>Configuration (une seule fois)</b>
+    <p><small>Ces valeurs restent dans ce navigateur (localStorage). Elles ne sont jamais dans le code de la page.</small></p>
+    <label for="f-server">Serveur ntfy</label>
+    <input id="f-server" value="https://ntfy.sh" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <label for="f-state">Topic ÉTAT</label>
+    <input id="f-state" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <label for="f-cmd">Topic COMMANDE</label>
+    <input id="f-cmd" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <label for="f-token">Jeton de commande</label>
+    <input id="f-token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="msg" id="setup-msg"></div>
+    <button id="save" style="width:100%;background:var(--acc)">Enregistrer</button>
+  </section>
+
+  <section id="app" hidden>
+    <div class="card" id="statecard">
+      <div class="state" id="state">…</div>
+      <div class="row"><span>Mode</span><b id="mode-txt">en attente du serveur</b></div>
+    </div>
+
+    <div class="btns">
+      <button id="arm">Activer</button>
+      <button id="disarm">Désactiver</button>
+    </div>
+    <div class="msg" id="msg" role="status" aria-live="polite"></div>
+
+    <div class="card">
+      <div class="row"><span>Dernière position</span><b id="pos-time">–</b></div>
+      <div class="row"><span>Précision</span><b id="pos-acc">–</b></div>
+      <div class="row"><span>Position</span><b id="pos-link">–</b></div>
+      <button class="ghost" id="where" style="width:100%;margin-top:10px">Où est le vélo ? (interroger maintenant)</button>
+    </div>
+
+    <div class="card life">
+      <span class="dot" id="dot"></span>
+      <div><div id="life-txt">Aucun signe de vie</div><small id="life-sub">Battement attendu toutes les 8 min</small></div>
+    </div>
+
+    <button class="ghost" id="forget" style="width:100%">Oublier (effacer jetons et topics de ce navigateur)</button>
+  </section>
+</main>
+
+<script>
+"use strict";
+const KEY = "velo.cfg.v1";
+const LATE_S = 10 * 60;               // rouge au-delà de 10 min sans battement
+const $ = (id) => document.getElementById(id);
+let cfg = null, es = null, lastHb = 0, pending = null;
+
+// BEGIN_SEAL
+// Messages du topic ÉTAT : AES-256-GCM, clé dérivée du jeton par HKDF-SHA256 (distincte de la clé HMAC).
+// Format : "v1." + base64url(nonce[12] | chiffré | tag). L'AAD lie le message au topic.
+const HKDF_SALT = new TextEncoder().encode("velo-salt-v1");
+const HKDF_INFO = new TextEncoder().encode("velo/state/aes-gcm/v1");
+const b64u = {
+  dec: (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0)),
+  enc: (u8) => btoa(String.fromCharCode(...u8)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+};
+async function stateKey(token, usage) {
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(token), "HKDF", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: HKDF_SALT, info: HKDF_INFO },
+    base, { name: "AES-GCM", length: 256 }, false, [usage]);
+}
+const aadFor = (topic) => new TextEncoder().encode("velo/state/v1|" + topic);
+async function openSealed(token, topic, message) {
+  if (typeof message !== "string" || !message.startsWith("v1.")) throw new Error("format inconnu");
+  const raw = b64u.dec(message.slice(3));
+  if (raw.length < 28) throw new Error("message trop court");
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: raw.slice(0, 12), additionalData: aadFor(topic) },
+    await stateKey(token, "decrypt"), raw.slice(12));
+  const out = JSON.parse(new TextDecoder().decode(plain));
+  if (out === null || typeof out !== "object" || Array.isArray(out)) throw new Error("contenu inattendu");
+  return out;
+}
+async function sealPayload(token, topic, obj) {     // utilisé par les tests d'interopérabilité
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: aadFor(topic) },
+    await stateKey(token, "encrypt"), new TextEncoder().encode(JSON.stringify(obj))));
+  const all = new Uint8Array(12 + ct.length); all.set(iv); all.set(ct, 12);
+  return "v1." + b64u.enc(all);
+}
+// END_SEAL
+
+// BEGIN_SIGN
+// Signature HMAC-SHA256 hexadécimale de « cmd ts nonce ». Le jeton n'est jamais envoyé.
+async function sign(token, cmd, ts, nonce) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(token),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = await crypto.subtle.sign("HMAC", key, enc.encode(`${cmd} ${ts} ${nonce}`));
+  return Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+// END_SIGN
+
+function load() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
+function save(c) { localStorage.setItem(KEY, JSON.stringify(c)); }
+
+function say(text, cls) { const m = $("msg"); m.textContent = text || ""; m.className = "msg " + (cls || ""); }
+
+const fmtTime = (s) => new Date(s * 1000).toLocaleString("fr-FR", { timeZone: "Asia/Jerusalem",
+  day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function ago(s) {
+  const d = Math.max(0, Math.floor(Date.now() / 1000) - s);
+  if (d < 90) return d + " s";
+  if (d < 5400) return Math.round(d / 60) + " min";
+  return (d / 3600).toFixed(1) + " h";
+}
+const num = (v) => (typeof v === "number" && isFinite(v)) ? v : null;
+
+function render(p) {
+  // p : charge JSON du serveur ; chaque champ est validé avant affichage (aucun innerHTML)
+  if (typeof p.hb === "number") lastHb = Math.max(lastHb, p.hb);
+  const mode = ["ARMED", "DISARMED", "ALERT"].includes(p.mode) ? p.mode : null;
+  if (mode) {
+    $("state").textContent = mode === "ARMED" ? "ARMÉ" : mode === "ALERT" ? "ALERTE" : "DÉSARMÉ";
+    $("state").className = "state " + mode;
+    $("mode-txt").textContent = mode === "ALERT" ? "Vélo déplacé !" : mode === "ARMED" ? "Surveillance active" : "Surveillance arrêtée";
+    $("statecard").className = "card" + (mode === "ALERT" ? " alertbox" : "");
+  }
+  const pos = p.pos;
+  if (pos && num(pos.lat) !== null && num(pos.lon) !== null && num(pos.ts) !== null) {
+    $("pos-time").textContent = fmtTime(pos.ts) + " (il y a " + ago(pos.ts) + ")";
+    $("pos-acc").textContent = num(pos.acc) !== null ? Math.round(pos.acc) + " m" : "–";
+    const a = document.createElement("a");
+    a.href = "https://www.google.com/maps/search/?api=1&query=" + pos.lat.toFixed(7) + "," + pos.lon.toFixed(7);
+    a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = "Ouvrir dans Maps";
+    $("pos-link").replaceChildren(a);
+  }
+  if (p.reply_to && pending && p.reply_to === pending.nonce) {
+    pending = null;
+    say(p.ok ? "Fait : " + (p.cmd === "arm" ? "vélo armé." : p.cmd === "disarm" ? "vélo désarmé." : "position à jour.")
+             : "Échec : " + String(p.error || "erreur inconnue").slice(0, 140), p.ok ? "ok" : "err");
+    setBusy(false);
+  }
+  life();
+}
+
+function life() {
+  const dot = $("dot");
+  if (!lastHb) { dot.className = "dot"; $("life-txt").textContent = "Aucun signe de vie"; return; }
+  const late = Math.floor(Date.now() / 1000) - lastHb > LATE_S;
+  dot.className = "dot " + (late ? "late" : "ok");
+  $("life-txt").textContent = (late ? "Serveur muet : " : "Serveur en vie : ") + "dernier signe il y a " + ago(lastHb);
+  $("life-txt").style.color = late ? "var(--bad)" : "";
+}
+
+let okCount = 0, failCount = 0;
+async function handleNtfy(ev) {
+  if (!ev || ev.event !== "message" || typeof ev.message !== "string") return;
+  let p;
+  try { p = await openSealed(cfg.token, cfg.state, ev.message); }
+  catch (e) {                                   // jamais de repli sur du texte en clair
+    failCount++;
+    if (okCount === 0 && failCount >= 2) say("Impossible de lire l'état : jeton ou topic ÉTAT incorrect ?", "err");
+    return;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof p.hb === "number" && p.hb > now + 300) return;   // horodatage dans le futur : ignoré
+  okCount++;
+  render(p);
+}
+
+async function backfill() {
+  try {
+    const r = await fetch(`${cfg.server}/${encodeURIComponent(cfg.state)}/json?poll=1&since=12h`);
+    for (const line of (await r.text()).split("\n")) { if (line.trim()) { try { handleNtfy(JSON.parse(line)); } catch (e) {} } }
+  } catch (e) { say("Impossible de lire l'état (réseau ?)", "err"); }
+}
+
+function subscribe() {
+  if (es) es.close();
+  es = new EventSource(`${cfg.server}/${encodeURIComponent(cfg.state)}/sse`);
+  es.onmessage = (e) => { try { handleNtfy(JSON.parse(e.data)); } catch (x) {} };
+  es.onerror = () => {};                      // EventSource se reconnecte seul
+}
+
+function setBusy(b) { for (const id of ["arm", "disarm", "where"]) $(id).disabled = b; }
+
+async function command(cmd) {
+  if (!(crypto && crypto.subtle)) { say("Cette page doit être ouverte en HTTPS.", "err"); return; }
+  setBusy(true); say("Envoi de « " + cmd + " »…");
+  const ts = Math.floor(Date.now() / 1000);
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
+  pending = { nonce };
+  try {
+    const sig = await sign(cfg.token, cmd, ts, nonce);
+    const r = await fetch(cfg.server + "/", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic: cfg.command, message: `${cmd} ${ts} ${nonce} ${sig}` }) });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    say("Commande envoyée, en attente de la réponse du serveur…");
+    setTimeout(() => { if (pending && pending.nonce === nonce) { pending = null; setBusy(false);
+      say("Pas de réponse du serveur au bout de 75 s. Il est peut-être éteint.", "err"); } }, 75000);
+  } catch (e) { pending = null; setBusy(false); say("Envoi impossible : " + e.message, "err"); }
+}
+
+function start() {
+  $("setup").hidden = true; $("app").hidden = false;
+  subscribe(); backfill(); setInterval(life, 15000);
+}
+
+$("save").onclick = () => {
+  const c = { server: $("f-server").value.trim().replace(/\/+$/, ""), state: $("f-state").value.trim(),
+              command: $("f-cmd").value.trim(), token: $("f-token").value.trim() };
+  if (!/^https:\/\//.test(c.server) || !c.state || !c.command || c.token.length < 16) {
+    $("setup-msg").textContent = "Vérifie les champs (serveur en https, topics, jeton de 16+ caractères)."; $("setup-msg").className = "msg err"; return; }
+  save(c); cfg = c; $("f-token").value = ""; start();
+};
+$("arm").onclick = () => command("arm");
+$("disarm").onclick = () => command("disarm");
+$("where").onclick = () => command("ou");
+$("forget").onclick = () => {
+  if (!confirm("Effacer les jetons et topics de ce navigateur ?")) return;
+  localStorage.removeItem(KEY); if (es) es.close(); location.reload();
+};
+
+cfg = load();
+if (cfg && cfg.server && cfg.state && cfg.command && cfg.token) start(); else $("setup").hidden = false;
+</script>
+</body>
+</html>
