@@ -260,6 +260,21 @@ $("forget").onclick = () => {
   localStorage.removeItem(KEY); if (es) es.close(); location.reload();
 };
 
+// Configuration par QR : l'adresse porte la config dans le fragment « #c=<base64url(JSON)> ».
+// Le fragment n'est JAMAIS envoyé au serveur ; il est lu, validé, enregistré puis effacé de la barre d'adresse.
+(function importFragment() {
+  const m = /^#c=([A-Za-z0-9_-]+)$/.exec(location.hash);
+  if (!m) return;
+  try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}   // effacé d'abord
+  try {
+    const b = m[1].replace(/-/g, "+").replace(/_/g, "/");
+    const j = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b + "=".repeat((4 - b.length % 4) % 4)), (ch) => ch.charCodeAt(0))));
+    const c = { server: String(j.server || "").replace(/\/+$/, ""), state: String(j.state || ""),
+                command: String(j.command || ""), token: String(j.token || "") };
+    if (/^https:\/\//.test(c.server) && c.state && c.command && c.token.length >= 16) save(c);
+  } catch (e) {}
+})();
+
 cfg = load();
 if (cfg && cfg.server && cfg.state && cfg.command && cfg.token) start(); else $("setup").hidden = false;
 </script>
